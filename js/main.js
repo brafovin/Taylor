@@ -95,20 +95,29 @@ window.GameState = (function() {
     await tick(); // let browser paint loading screen
 
     // ── Renderer ───────────────────────────────────────────────────────────────
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', stencil: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    renderer.toneMappingExposure = 1.05;
     renderer.outputEncoding = THREE.sRGBEncoding;
+    // Physically correct light falloff for more believable shading
+    renderer.physicallyCorrectLights = true;
     document.body.appendChild(renderer.domElement);
     S.renderer = renderer;
 
+    // Build a soft sky environment map so PBR materials pick up realistic
+    // ambient reflections instead of looking flat.
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+    S.pmrem = pmrem;
+
     // ── Scene ──────────────────────────────────────────────────────────────────
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0xaaccee, 150, 450);
+    // Exponential fog reads as real atmospheric haze (denser with distance)
+    scene.fog = new THREE.FogExp2(0xaaccee, 0.0035);
     S.scene = scene;
 
     // ── Camera ─────────────────────────────────────────────────────────────────
@@ -133,6 +142,17 @@ window.GameState = (function() {
     // ── Sky & Atmosphere ───────────────────────────────────────────────────────
     World.buildSky(scene);
     World.buildWater(scene);
+
+    // Capture the procedural sky into an environment map so every PBR material
+    // gets believable ambient reflections / image-based lighting.
+    World.updateSky(S.timeOfDay);
+    try {
+        if (World.sky) {
+            const envRT = pmrem.fromScene(World.sky, 0, 1, 1000);
+            scene.environment = envRT.texture;
+        }
+    } catch (e) { console.warn('Env map generation failed:', e); }
+
     GameUI.setLoadingProgress(50, 'Wald und Pflanzen...');
     await tick();
 
@@ -168,9 +188,12 @@ window.GameState = (function() {
         try {
             composer = new THREE.EffectComposer(renderer);
             composer.addPass(new THREE.RenderPass(scene, camera));
+            // Subtle bloom: only bright highlights (sun, glow) bloom, not the whole scene
             const bloom = new THREE.UnrealBloomPass(
                 new THREE.Vector2(window.innerWidth, window.innerHeight),
-                0.35, 0.5, 0.9
+                0.22,  // strength
+                0.4,   // radius
+                0.85   // threshold (only bright pixels)
             );
             composer.addPass(bloom);
             S.composer = composer;
@@ -227,6 +250,7 @@ window.GameState = (function() {
 
     // ── Update functions ────────────────────────────────────────────────────────
     function updateSkyAndTime(dt) {
+        World.setFocus(playerBody.position);
         World.updateSky(S.timeOfDay);
         World.updateWater(dt);
         World.animateClouds(dt);

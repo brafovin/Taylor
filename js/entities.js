@@ -347,7 +347,7 @@ window.Monsters = (function() {
             f.userData.isFireParticle = true; f.userData.pt = i / 6 * Math.PI * 2;
             g.add(f);
         }
-        const light = new THREE.PointLight(0xff8800, 1.5, 8);
+        const light = new THREE.PointLight(0xff8800, 18, 10, 2);
         light.position.y = 2.5; g.add(light);
         const m = new Monster('blaze', g, 20, 5, 0, 40);
         m.flying = true; m.flyHeight = 5 + Math.random() * 3;
@@ -563,7 +563,7 @@ window.Monsters = (function() {
         proj.userData.life = 4;
         proj.userData.damage = monster.dmg;
         if (monster.type === 'blaze') {
-            proj.add(new THREE.PointLight(0xff8800, 1.5, 3));
+            proj.add(new THREE.PointLight(0xff8800, 10, 6, 2));
         }
         scene.add(proj);
         projectiles.push(proj);

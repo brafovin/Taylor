@@ -2,7 +2,7 @@
 window.Terrain = (function() {
 
     const WORLD_SIZE = 600;
-    const SEGMENTS = 220;
+    const SEGMENTS = 300;
     let noise, heightData = [], scene, terrainMesh, waterMesh, scene_ref;
 
     // Biome constants
@@ -30,23 +30,43 @@ window.Terrain = (function() {
         return 'snow';
     }
 
-    function heightToColor(h, nx, ny) {
-        const lighting = Math.max(0.4, ny * 0.6 + nx * 0.1 + 0.4);
-        let r, g, b;
-        if (h < -2) {         r = 0.06; g = 0.20; b = 0.55; }  // deep water (shouldn't show)
-        else if (h < BEACH_H) { r = 0.82; g = 0.75; b = 0.50; } // sand
-        else if (h < GRASS_H) { r = 0.22; g = 0.52; b = 0.12; } // grass
-        else if (h < HILL_H)  { r = 0.30; g = 0.44; b = 0.18; } // highland grass
-        else if (h < ROCK_H)  { r = 0.48; g = 0.44; b = 0.40; } // rock
-        else                   { r = 0.92; g = 0.93; b = 0.96; } // snow
+    // Realistic earth palette (linear-ish sRGB values)
+    const PAL = {
+        sandLow:  new THREE.Color(0.76, 0.68, 0.45),
+        sand:     new THREE.Color(0.85, 0.78, 0.55),
+        grass:    new THREE.Color(0.20, 0.46, 0.12),
+        grassDry: new THREE.Color(0.34, 0.44, 0.16),
+        highland: new THREE.Color(0.30, 0.40, 0.18),
+        rock:     new THREE.Color(0.42, 0.39, 0.36),
+        rockDark: new THREE.Color(0.30, 0.28, 0.26),
+        snow:     new THREE.Color(0.94, 0.95, 0.98),
+    };
+    function smoothstep(a, b, x) { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
 
-        // blend with actual noise-texture detail
-        const jitter = (Math.random() - 0.5) * 0.04;
-        return new THREE.Color(
-            Math.max(0, Math.min(1, (r + jitter) * lighting)),
-            Math.max(0, Math.min(1, (g + jitter) * lighting)),
-            Math.max(0, Math.min(1, (b + jitter) * lighting))
-        );
+    function heightToColor(h, ny, tint, out) {
+        // ny ~1 => flat, ~0 => vertical cliff. Slope drives exposed rock.
+        const slope = 1 - Math.max(0, Math.min(1, ny));
+        const c = out || new THREE.Color();
+
+        // Base ground colour by altitude, with smooth band transitions
+        c.copy(PAL.sandLow).lerp(PAL.sand, smoothstep(-1, BEACH_H, h));
+        c.lerp(PAL.grass,    smoothstep(BEACH_H - 0.5, BEACH_H + 2, h));
+        c.lerp(PAL.highland, smoothstep(GRASS_H - 4, HILL_H, h));
+        c.lerp(PAL.rock,     smoothstep(HILL_H - 2, ROCK_H, h));
+        c.lerp(PAL.snow,     smoothstep(ROCK_H + 4, SNOW_H, h));
+
+        // Steep ground turns to rock regardless of altitude (above the beach)
+        if (h > BEACH_H + 1) {
+            const rockMix = smoothstep(0.35, 0.62, slope);
+            const rk = (h > ROCK_H) ? PAL.rock : PAL.rockDark;
+            c.lerp(rk, rockMix * 0.85);
+        }
+
+        // Per-vertex coherent tint (from noise) for natural mottling, not random fuzz
+        c.r = Math.max(0, Math.min(1, c.r * (1 + tint * 0.18)));
+        c.g = Math.max(0, Math.min(1, c.g * (1 + tint * 0.16)));
+        c.b = Math.max(0, Math.min(1, c.b * (1 + tint * 0.12)));
+        return c;
     }
 
     function build(scene_in, seed) {
@@ -71,20 +91,25 @@ window.Terrain = (function() {
         }
         geo.computeVertexNormals();
 
-        // vertex colors based on height + normal
+        // vertex colors based on height + slope + coherent noise tint
+        const tintNoise = new PerlinNoise((seed || 42) + 777);
+        const tmpCol = new THREE.Color();
         for (let i = 0; i < positions.count; i++) {
+            const wx = positions.getX(i), wz = positions.getZ(i);
             const h = positions.getY(i);
-            const nx = normals.getX(i), ny = normals.getY(i);
-            const col = heightToColor(h, nx, ny);
+            const ny = normals.getY(i);
+            const tint = tintNoise.octave(wx / 12, wz / 12, 3, 0.55, 1); // -1..1 coherent
+            const col = heightToColor(h, ny, tint, tmpCol);
             colors[i * 3] = col.r; colors[i * 3 + 1] = col.g; colors[i * 3 + 2] = col.b;
         }
         geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
         const mat = new THREE.MeshStandardMaterial({
             vertexColors: true,
-            roughness: 0.88,
-            metalness: 0.04,
-            envMapIntensity: 0.6,
+            roughness: 0.95,
+            metalness: 0.0,
+            envMapIntensity: 0.35,
+            flatShading: false,
         });
 
         terrainMesh = new THREE.Mesh(geo, mat);

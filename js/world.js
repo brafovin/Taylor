@@ -1,10 +1,11 @@
 'use strict';
 window.World = (function() {
 
-    let scene, sky, water, sun, moon, stars, ambientLight, dirLight, waterMesh;
+    let scene, sky, water, sun, moon, stars, ambientLight, dirLight, hemiLight, waterMesh;
     let treeGroup, grassGroup, flowerGroup, villageGroup;
     const DAY_LENGTH = 1200; // seconds for full cycle
     let timeOfDay = 0.25; // 0=midnight 0.5=noon
+    const _origin = new THREE.Vector3();
 
     // ── Sky & Atmosphere ──────────────────────────────────────────────────────
     function buildSky(scene_in) {
@@ -60,16 +61,21 @@ window.World = (function() {
 
         dirLight = new THREE.DirectionalLight(0xfffbe0, 1.2);
         dirLight.castShadow = true;
-        dirLight.shadow.mapSize.set(2048, 2048);
+        dirLight.shadow.mapSize.set(4096, 4096);
         dirLight.shadow.camera.near = 1;
         dirLight.shadow.camera.far = 600;
-        dirLight.shadow.camera.left = dirLight.shadow.camera.bottom = -200;
-        dirLight.shadow.camera.right = dirLight.shadow.camera.top = 200;
-        dirLight.shadow.bias = -0.001;
+        // Tighter frustum focused near the player => crisper, higher-res shadows
+        dirLight.shadow.camera.left = dirLight.shadow.camera.bottom = -120;
+        dirLight.shadow.camera.right = dirLight.shadow.camera.top = 120;
+        dirLight.shadow.bias = -0.0004;
+        dirLight.shadow.normalBias = 0.04;
+        dirLight.shadow.radius = 3; // soft penumbra
         scene.add(dirLight);
+        scene.add(dirLight.target);
 
-        // Soft fill
-        scene.add(new THREE.HemisphereLight(0x87ceeb, 0x4a7c4e, 0.35));
+        // Soft sky/ground fill light (kept as a handle so it can follow the day cycle)
+        hemiLight = new THREE.HemisphereLight(0x9ec8ff, 0x4a6b3c, 0.6);
+        scene.add(hemiLight);
     }
 
     function buildClouds() {
@@ -115,24 +121,38 @@ window.World = (function() {
             sky.material.uniforms['sunPosition'].value.setFromSphericalCoords(1, phi, theta);
         }
 
-        // Directional light follows sun
-        dirLight.position.copy(sun.position).normalize().multiplyScalar(150);
+        // Sun light direction follows the sun; anchor the shadow frustum on the
+        // player so the tight (high-res) shadow map always covers what you see.
+        const sunDir = sun.position.clone().normalize();
+        const focus = World._focus || _origin;
+        dirLight.target.position.copy(focus);
+        dirLight.position.copy(focus).addScaledVector(sunDir, 150);
 
         const day = elev > 0;
         const dawn = t > 0.2 && t < 0.35;
         const dusk = t > 0.65 && t < 0.8;
 
         if (day) {
-            const warmth = dawn || dusk ? 0.8 : 1.0;
-            dirLight.color.setRGB(1.0 * warmth, 0.94 * warmth, 0.78 * warmth);
-            dirLight.intensity = Math.min(1.4, elev * 3);
-            ambientLight.intensity = 0.3 + elev * 0.4;
-            ambientLight.color.setHex(dawn || dusk ? 0xffb870 : 0x6699cc);
+            // Warm, golden light low on the horizon; neutral white at noon
+            const golden = (dawn || dusk) ? 1 : 0;
+            const r1 = 1.0, g1 = 0.97 - golden * 0.22, b1 = 0.88 - golden * 0.45;
+            dirLight.color.setRGB(r1, g1, b1);
+            // Sun is brightest overhead; physically-correct-ish ramp
+            dirLight.intensity = Math.min(2.8, 0.5 + elev * 3.0);
+            // Sky bounce light kept modest because the env map already adds IBL
+            ambientLight.intensity = 0.15 + elev * 0.2;
+            ambientLight.color.setHex((dawn || dusk) ? 0xffc080 : 0x90b8e0);
+            if (hemiLight) {
+                hemiLight.intensity = 0.3 + elev * 0.35;
+                hemiLight.color.setHex((dawn || dusk) ? 0xffd0a0 : 0xaed6ff);
+            }
         } else {
-            dirLight.intensity = 0.06;
-            dirLight.color.setHex(0x8899bb);
-            ambientLight.intensity = 0.06;
-            ambientLight.color.setHex(0x111133);
+            // Cool, dim moonlight
+            dirLight.intensity = 0.12;
+            dirLight.color.setHex(0x90a8d8);
+            ambientLight.intensity = 0.08;
+            ambientLight.color.setHex(0x101830);
+            if (hemiLight) { hemiLight.intensity = 0.12; hemiLight.color.setHex(0x2a3a5a); }
         }
 
         // Stars visibility
@@ -145,18 +165,18 @@ window.World = (function() {
         moon.material.opacity = Math.max(0, Math.min(1, (-sy / r) * 3));
         moon.material.transparent = true;
 
-        // Fog
-        const fogNear = day ? 150 : 60;
-        const fogFar  = day ? 450 : 180;
+        // Atmospheric haze (exponential): thin & blue by day, thick & dark at night
         if (dawn || dusk) {
-            scene.fog.color.setHex(0xff8844);
+            scene.fog.color.setHex(0xe8946a);
+            scene.fog.density = 0.0042;
         } else if (day) {
-            scene.fog.color.setHex(0xaaccee);
+            // Blend toward the actual sky tint at the horizon
+            scene.fog.color.setRGB(0.62, 0.74, 0.88);
+            scene.fog.density = 0.0026 + (1 - elev) * 0.002;
         } else {
-            scene.fog.color.setHex(0x040408);
+            scene.fog.color.setHex(0x05060c);
+            scene.fog.density = 0.0075;
         }
-        scene.fog.near = fogNear;
-        scene.fog.far  = fogFar;
     }
 
     // ── Water ──────────────────────────────────────────────────────────────────
@@ -235,6 +255,16 @@ window.World = (function() {
         if (!waterMesh || !waterMesh.material || !waterMesh.material.uniforms) return;
         const u = waterMesh.material.uniforms;
         if (u.time !== undefined) u.time.value += dt * 0.5;
+        // Track the sun so glints/specular on the water move through the day
+        if (sun) {
+            const sd = sun.position.clone().normalize();
+            if (u.sunDirection) u.sunDirection.value.copy(sd);
+            else if (u.sunDir) u.sunDir.value.copy(sd);
+            // Tint the water darker & cooler at night
+            const day = sun.position.y > 0;
+            if (u.waterColor) u.waterColor.value.setHex(day ? 0x0d4f7a : 0x06243a);
+            else if (u.color) u.color.value.setHex(day ? 0x1a6fa8 : 0x0a3050);
+        }
     }
 
     // ── Vegetation ──────────────────────────────────────────────────────────────
@@ -433,8 +463,9 @@ window.World = (function() {
         sideWin2.position.set(-w / 2 - 0.05, h * 0.55, 0);
         sideWin2.rotation.y = -Math.PI / 2; g.add(sideWin2);
 
-        // Light inside (emissive window glow at night)
-        const glow = new THREE.PointLight(0xffaa44, 0, 8);
+        // Light inside (emissive window glow at night) - candela values for
+        // physically correct falloff
+        const glow = new THREE.PointLight(0xffb35a, 0, 14, 2);
         glow.position.set(0, h * 0.55, 0);
         glow.userData.isWindowLight = true;
         g.add(glow);
@@ -451,7 +482,7 @@ window.World = (function() {
         if (!villageGroup) return;
         villageGroup.traverse(obj => {
             if (obj.userData.isWindowLight) {
-                obj.intensity = isNight ? (2 + Math.sin(Date.now() * 0.001) * 0.3) : 0;
+                obj.intensity = isNight ? (28 + Math.sin(Date.now() * 0.001) * 4) : 0;
             }
         });
     }
@@ -465,14 +496,22 @@ window.World = (function() {
         });
     }
 
+    // Let the game loop tell us where the player is so shadows can follow them
+    function setFocus(pos) {
+        if (!World._focus) World._focus = new THREE.Vector3();
+        World._focus.copy(pos);
+    }
+
     return {
         buildSky, buildWater, buildVegetation, buildVillage,
-        updateSky, updateWater, updateWindowLights, animateClouds,
+        updateSky, updateWater, updateWindowLights, animateClouds, setFocus,
         get sky() { return sky; },
         get water() { return waterMesh; },
         get sun() { return sun; },
         get moon() { return moon; },
         get dirLight() { return dirLight; },
+        get hemiLight() { return hemiLight; },
         _clouds: null,
+        _focus: null,
     };
 })();
