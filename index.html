@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Realistisches Minecraft</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #000; font-family: 'Segoe UI', Arial, sans-serif; touch-action: none; }
+        canvas { display: block; }
+
+        #loading {
+            position: fixed; inset: 0;
+            background: linear-gradient(160deg, #0a0a1a 0%, #0d2137 50%, #112d4e 100%);
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 1000; color: #fff;
+        }
+        #loading h1 { font-size: clamp(2em, 5vw, 3.5em); margin-bottom: 12px; letter-spacing: 2px; text-shadow: 0 0 30px #4fc3f7; }
+        #loading .subtitle { color: #90caf9; font-size: 1.1em; margin-bottom: 40px; }
+        .progress-bar { width: min(400px, 80vw); height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #29b6f6, #7c4dff, #e040fb); width: 0%; border-radius: 4px; transition: width 0.15s ease; }
+        #loading-status { margin-top: 14px; color: #b0bec5; font-size: 0.9em; min-height: 1.4em; }
+
+        #start-screen {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 900; color: #fff; text-align: center; padding: 20px;
+        }
+        #start-screen h1 { font-size: clamp(2.5em, 7vw, 5em); text-shadow: 3px 3px 0 #000; margin-bottom: 8px; }
+        #start-screen .tagline { color: #b3e5fc; font-size: clamp(1em, 2.5vw, 1.3em); margin-bottom: 50px; }
+        .btn {
+            padding: 14px 44px; font-size: 1.1em; cursor: pointer;
+            background: linear-gradient(135deg, #43a047, #2e7d32);
+            color: #fff; border: none; border-radius: 6px; margin: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.2);
+            transition: all 0.2s; text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+            letter-spacing: 0.5px;
+        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 25px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.2); }
+        .btn:active { transform: translateY(1px); }
+        .btn.red { background: linear-gradient(135deg, #e53935, #b71c1c); }
+        .btn.blue { background: linear-gradient(135deg, #1976d2, #0d47a1); }
+        .controls-hint { margin-top: 30px; color: #78909c; font-size: 0.85em; line-height: 1.8; }
+        kbd { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); border-radius: 3px; padding: 2px 6px; font-family: monospace; }
+
+        #hud { position: fixed; inset: 0; pointer-events: none; z-index: 100; display: none; }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 22px; height: 22px;
+        }
+        #crosshair::before, #crosshair::after {
+            content: ''; position: absolute; background: rgba(255,255,255,0.85); border-radius: 1px;
+        }
+        #crosshair::before { width: 2px; height: 100%; left: 50%; top: 0; transform: translateX(-50%); }
+        #crosshair::after  { height: 2px; width: 100%; top: 50%; left: 0; transform: translateY(-50%); }
+
+        #health-bar {
+            position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 5px; align-items: center;
+        }
+        .heart { width: 22px; height: 22px; position: relative; flex-shrink: 0; }
+        .heart svg { width: 100%; height: 100%; }
+
+        #hotbar {
+            position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 3px;
+        }
+        .hotbar-slot {
+            width: 54px; height: 54px; background: rgba(0,0,0,0.4);
+            border: 2px solid rgba(255,255,255,0.3); border-radius: 4px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 0.7em; color: #ccc; position: relative;
+        }
+        .hotbar-slot.active { border-color: rgba(255,255,255,0.8); }
+        .hotbar-slot .icon { font-size: 1.6em; }
+
+        #time-weather {
+            position: absolute; top: 14px; right: 16px;
+            color: #fff; font-size: 0.85em; text-align: right;
+            text-shadow: 1px 1px 3px #000; line-height: 1.7;
+        }
+        #debug-info {
+            position: absolute; top: 14px; left: 16px;
+            color: rgba(255,255,255,0.8); font-size: 0.78em;
+            text-shadow: 1px 1px 2px #000; line-height: 1.7; font-family: monospace;
+        }
+        #notification {
+            position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.7); color: #fff; padding: 8px 20px;
+            border-radius: 20px; font-size: 0.9em; opacity: 0;
+            transition: opacity 0.4s; pointer-events: none; white-space: nowrap;
+        }
+        #boss-bar {
+            position: absolute; top: 30px; left: 50%; transform: translateX(-50%);
+            width: min(400px, 70vw); display: none;
+        }
+        #boss-bar .boss-name { color: #ff8a80; text-align: center; font-size: 0.85em; margin-bottom: 4px; text-shadow: 1px 1px 2px #000; }
+        #boss-bar .bar-bg { background: rgba(0,0,0,0.5); border-radius: 3px; height: 8px; border: 1px solid rgba(255,255,255,0.2); }
+        #boss-bar .bar-fill { background: linear-gradient(90deg, #ff5252, #ff1744); height: 100%; border-radius: 2px; transition: width 0.3s; }
+
+        #damage-overlay { position: fixed; inset: 0; background: rgba(200,0,0,0); pointer-events: none; z-index: 150; transition: background 0.4s; }
+        #heal-overlay   { position: fixed; inset: 0; background: rgba(0,200,0,0);  pointer-events: none; z-index: 150; transition: background 0.4s; }
+        #night-vignette { position: fixed; inset: 0; pointer-events: none; z-index: 50; background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,20,0) 100%); }
+
+        /* Mobile controls */
+        #mobile-controls {
+            position: fixed; bottom: 0; left: 0; width: 100%; height: 220px;
+            pointer-events: none; z-index: 200; display: none;
+        }
+        #joystick-zone {
+            position: absolute; bottom: 20px; left: 20px;
+            width: 130px; height: 130px; pointer-events: all;
+        }
+        #joystick-base {
+            width: 100%; height: 100%; border-radius: 50%;
+            background: rgba(255,255,255,0.12); border: 2px solid rgba(255,255,255,0.35);
+            position: relative; box-shadow: 0 0 20px rgba(0,100,255,0.2);
+        }
+        #joystick-knob {
+            width: 52px; height: 52px; border-radius: 50%;
+            background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.9), rgba(200,200,255,0.6));
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+            pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        }
+        #look-zone {
+            position: absolute; bottom: 0; right: 0; width: calc(100% - 200px); height: 100%;
+            pointer-events: all;
+        }
+        #mobile-btns {
+            position: absolute; bottom: 30px; right: 20px;
+            display: flex; flex-direction: column; gap: 10px; pointer-events: all;
+        }
+        .mob-btn {
+            width: 62px; height: 62px; border-radius: 50%;
+            background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.45);
+            color: #fff; font-size: 1.1em; display: flex; align-items: center;
+            justify-content: center; cursor: pointer; user-select: none;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3); -webkit-user-select: none;
+        }
+        .mob-btn:active { background: rgba(255,255,255,0.4); }
+
+        #pause-menu {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 500; color: #fff; text-align: center;
+        }
+        #pause-menu h2 { font-size: 2.5em; margin-bottom: 30px; letter-spacing: 2px; }
+
+        #game-over {
+            position: fixed; inset: 0;
+            background: rgba(100,0,0,0.85); backdrop-filter: blur(8px);
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 600; color: #fff; text-align: center;
+        }
+        #game-over h2 { font-size: 3.5em; color: #ff5252; margin-bottom: 12px; text-shadow: 0 0 20px #f00; }
+        #game-over .score { font-size: 1.2em; color: #ffcdd2; margin-bottom: 30px; }
+
+        @media (max-width: 640px) {
+            #start-screen h1 { font-size: 2.8em; }
+            .btn { padding: 12px 32px; font-size: 1em; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loading">
+    <h1>&#127758; Realistisches Minecraft</h1>
+    <div class="subtitle">Eine neue Welt wird erschaffen...</div>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    <div id="loading-status">Initialisiere Engine...</div>
+</div>
+
+<!-- Start Screen -->
+<div id="start-screen">
+    <h1>&#127758; Realistisches<br>Minecraft</h1>
+    <div class="tagline">Erlebe Minecraft wie nie zuvor - fotorealistisch &amp; lebendig!</div>
+    <button class="btn" id="play-btn">&#127918; Spielen</button>
+    <div class="controls-hint">
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Bewegen &nbsp;|&nbsp;
+        <kbd>Maus</kbd> Umschauen &nbsp;|&nbsp;
+        <kbd>Leertaste</kbd> Springen &nbsp;|&nbsp;
+        <kbd>Linksklick</kbd> Angreifen &nbsp;|&nbsp;
+        <kbd>ESC</kbd> Pause<br>
+        Handy: Linker Joystick = Bewegen &nbsp;|&nbsp; Rechts wischen = Kamera
+    </div>
+</div>
+
+<!-- HUD -->
+<div id="hud">
+    <div id="crosshair"></div>
+    <div id="debug-info"></div>
+    <div id="time-weather"></div>
+    <div id="health-bar"></div>
+    <div id="hotbar"></div>
+    <div id="notification"></div>
+    <div id="boss-bar">
+        <div class="boss-name" id="boss-name"></div>
+        <div class="bar-bg"><div class="bar-fill" id="boss-fill"></div></div>
+    </div>
+</div>
+
+<!-- Mobile Controls -->
+<div id="mobile-controls">
+    <div id="joystick-zone">
+        <div id="joystick-base"><div id="joystick-knob"></div></div>
+    </div>
+    <div id="look-zone"></div>
+    <div id="mobile-btns">
+        <div class="mob-btn" id="jump-btn" title="Springen">&#11014;</div>
+        <div class="mob-btn" id="attack-btn" title="Angreifen">&#9876;</div>
+        <div class="mob-btn" id="sprint-btn" title="Rennen">&#128007;</div>
+    </div>
+</div>
+
+<!-- Overlays -->
+<div id="damage-overlay"></div>
+<div id="heal-overlay"></div>
+<div id="night-vignette"></div>
+
+<!-- Pause Menu -->
+<div id="pause-menu">
+    <h2>&#9646;&#9646; Pause</h2>
+    <button class="btn" id="resume-btn">&#9654; Weiterspielen</button>
+    <button class="btn blue" id="new-world-btn">&#127758; Neue Welt</button>
+    <button class="btn red" id="menu-btn">&#127968; Hauptmenü</button>
+</div>
+
+<!-- Game Over -->
+<div id="game-over">
+    <h2>&#128128; Du bist gestorben!</h2>
+    <div class="score" id="score-text"></div>
+    <button class="btn" id="respawn-btn">&#128154; Neu starten</button>
+    <button class="btn red" id="go-menu-btn">&#127968; Hauptmenü</button>
+</div>
+
+<!-- Three.js and addons (UMD builds work without a server) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/controls/PointerLockControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/objects/Sky.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/objects/Water.js"></script>
+<!-- Shaders BEFORE the postprocessing passes that depend on them -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.148.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+
+<!-- Game Scripts -->
+<script src="js/noise.js"></script>
+<script src="js/textures.js"></script>
+<script src="js/terrain.js"></script>
+<script src="js/world.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/controls.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

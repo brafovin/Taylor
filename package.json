@@ -1,0 +1,11 @@
+{
+  "name": "realistisches-minecraft",
+  "version": "1.0.0",
+  "description": "Realistisches Minecraft-Spiel für PC und Handy (Three.js)",
+  "scripts": {
+    "start": "npx serve . -p 3000 --no-clipboard",
+    "dev": "npx live-server --port=3000 --open=index.html"
+  },
+  "keywords": ["minecraft", "threejs", "3d", "game"],
+  "license": "MIT"
+}
