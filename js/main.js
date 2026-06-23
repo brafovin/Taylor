@@ -48,10 +48,14 @@ window.GameState = (function() {
         toggleDebug() { state.debugMode = !state.debugMode; },
         onMonsterAttack(dmg) {
             if (!state.alive || !state.gameActive) return;
+            const def = window.Inventory ? Inventory.getTotalDefense() : 0;
+            dmg = Math.max(1, dmg - Math.floor(def * 0.4));
             state.hp = Math.max(0, state.hp - dmg);
             GameUI.updateHealth(state.hp, state.maxHp);
             GameUI.showDamage();
             if (state.hp <= 0) {
+                // Try totem pop before dying
+                if (window.Inventory && Inventory.tryTotemPop()) return;
                 state.alive = false;
                 setTimeout(() => {
                     GameUI.showGameOver(true, state.killCount, state.surviveTime);
@@ -62,6 +66,9 @@ window.GameState = (function() {
         },
         playerAttack() {
             if (!state.alive || !state.gameActive) return;
+            // Try to hit a crystal first
+            if (window.Crystals && Crystals.tryHit(state.camera)) return;
+
             const ppos = state.camera.getWorldPosition(new THREE.Vector3());
             const dir  = new THREE.Vector3(0, 0, -1).applyQuaternion(state.camera.getWorldQuaternion(new THREE.Quaternion()));
             const ray  = new THREE.Ray(ppos, dir);
@@ -73,7 +80,8 @@ window.GameState = (function() {
                 if (d < 1.5 && dist < closestDist) { closest = m; closestDist = dist; }
             });
             if (closest) {
-                const dmg = 7 + Math.floor(Math.random() * 5);
+                const buffs = window.Inventory ? Inventory.getBuffs() : {};
+                const dmg = 7 + Math.floor(Math.random() * 5) + (buffs.damageBuff || 0);
                 closest.takeDamage(dmg);
                 if (!closest.alive) {
                     state.killCount++;
@@ -182,6 +190,18 @@ window.GameState = (function() {
     // ── Controls ───────────────────────────────────────────────────────────────
     Controls.init(camera, renderer.domElement, playerBody);
 
+    // ── Inventory ──────────────────────────────────────────────────────────────
+    Inventory.init();
+
+    // ── Crystals ───────────────────────────────────────────────────────────────
+    Crystals.init(scene);
+
+    // ── Chat ───────────────────────────────────────────────────────────────────
+    Chat.init();
+
+    // ── Multiplayer ────────────────────────────────────────────────────────────
+    Multiplayer.init(scene);
+
     // ── Post-processing ────────────────────────────────────────────────────────
     let composer = null;
     if (THREE.EffectComposer && THREE.RenderPass && THREE.UnrealBloomPass) {
@@ -240,6 +260,9 @@ window.GameState = (function() {
         updateMonsters(dt);
         updateRegen(dt);
         updateSpawner(dt);
+        Inventory.updateBuffs(dt);
+        Crystals.update(dt, playerBody, camera);
+        Multiplayer.update(dt, playerBody, camera);
 
         if (S.debugMode) GameUI.updateDebug(playerBody, Monsters.getCount());
 
@@ -277,7 +300,8 @@ window.GameState = (function() {
     function updatePlayer(dt) {
         if (!S.alive) return;
         const mv = Controls.getMovement();
-        const SPEED = (mv.sprint ? 9 : 5);
+        const speedBuff = window.Inventory ? (Inventory.getBuffs().speedBuff || 0) : 0;
+        const SPEED = (mv.sprint ? 9 : 5) + speedBuff;
         const GRAVITY = -22;
         const JUMP   = 7.5;
         const PLAYER_H = 1.8;

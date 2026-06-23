@@ -4,7 +4,11 @@
   "description": "Realistisches Minecraft-Spiel für PC und Handy (Three.js)",
   "scripts": {
     "start": "npx serve . -p 3000 --no-clipboard",
-    "dev": "npx live-server --port=3000 --open=index.html"
+    "dev": "npx live-server --port=3000 --open=index.html",
+    "server": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
   },
   "keywords": ["minecraft", "threejs", "3d", "game"],
   "license": "MIT"

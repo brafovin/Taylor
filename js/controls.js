@@ -175,6 +175,10 @@ window.Controls = (function() {
     // Called from game loop – returns movement input
     function getMovement() {
         const mv = { forward: 0, right: 0, jump: false, sprint: false, attack: false };
+        // Block movement when overlays are open
+        const uiOpen = (window.Inventory && Inventory.getIsOpen()) ||
+                       (window.Chat && Chat.getIsOpen());
+        if (uiOpen) return mv;
         if (isMobile) {
             mv.forward = -joystick.dy;
             mv.right   =  joystick.dx;
